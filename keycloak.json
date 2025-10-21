@@ -16,8 +16,7 @@
   "socket-timeout-millis": 5000,
   "connection-timeout-millis": 5000,
   "connection-ttl-millis": 5000,
-  "disable-trust-manager": false,
-  "allow-any-hostname": false,
+  "allow-any-hostname": true,
   "truststore": "",
   "truststore-password": "",
   "client-keystore": "",
@@ -26,5 +25,8 @@
   "token-minimum-time-to-live": 10,
   "min-time-between-jwks-requests": 10,
   "public-key-cache-ttl": 86400,
-  "redirect-rewrite-rules": {}
+  "redirect-rewrite-rules": {},
+  "credentials": {
+    "secret": "your-client-secret-if-needed"
+  }
 }

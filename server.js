@@ -91,12 +91,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Keycloak configuration
 const keycloakConfig = {
-  realm: 'master', // Default realm, can be configured
-  'auth-server-url': 'http://localhost:8080/auth', // Default Keycloak URL
+  realm: 'utribe', // Default realm, can be configured
+  'auth-server-url': 'https://auth.utribe.app', // Default Keycloak URL
   'ssl-required': 'external',
-  resource: 'keycloak-social-login', // Client ID
+  resource: 'giftportal', // Client ID
   'public-client': true,
-  'confidential-port': 0
+  'confidential-port': 0,
+  'redirect-uri': `http://localhost:${PORT}/login`,
+  'post-logout-redirect-uri': `http://localhost:${PORT}/`
 };
 
 const keycloak = new Keycloak({ store: memoryStore }, keycloakConfig);

@@ -4,9 +4,12 @@
   "description": "Simple one-page Node.js application for Keycloak social login with advanced debugging",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "DEBUG=keycloak-app node server.js",
-    "debug": "DEBUG=keycloak-app,express:* node server.js",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "cross-env DEBUG=keycloak-app node server-simple.js",
+    "server:debug": "cross-env DEBUG=keycloak-app,express:* node server-simple.js",
+    "old": "cross-env DEBUG=keycloak-app node server.js",
     "test": "echo \"No tests specified\" && exit 0"
   },
   "keywords": [
@@ -19,13 +22,22 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
     "cors": "^2.8.5",
     "debug": "^4.4.3",
+    "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
     "express-session": "^1.18.2",
     "helmet": "^8.1.0",
     "keycloak-connect": "^26.1.1",
-    "morgan": "^1.10.1"
+    "keycloak-js": "^26.2.1",
+    "morgan": "^1.10.1",
+    "node-fetch": "^3.3.2",
+    "vite": "^7.1.11",
+    "vue": "^3.5.22"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }
