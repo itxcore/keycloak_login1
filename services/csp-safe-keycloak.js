@@ -46,7 +46,7 @@ export class CSPSafeKeycloakService {
    */
   async loadConfig() {
     try {
-      const response = await fetch('http://localhost:8000/api/keycloak-config')
+      const response = await fetch('/api/keycloak-config')
       if (!response.ok) {
         throw new Error(`Failed to load config: ${response.status}`)
       }
@@ -186,7 +186,7 @@ export class CSPSafeKeycloakService {
     console.log('📍 Using stored redirect URI:', storedRedirectUri)
 
     // Use server-side token exchange endpoint for security
-    const response = await fetch('http://localhost:8000/api/token-exchange', {
+    const response = await fetch('/api/token-exchange', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -229,7 +229,7 @@ export class CSPSafeKeycloakService {
     console.log('🔄 Refreshing access token...')
 
     try {
-      const response = await fetch('http://localhost:8000/api/token-refresh', {
+      const response = await fetch('/api/token-refresh', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -287,16 +287,6 @@ export class CSPSafeKeycloakService {
    * Logout from Keycloak
    */
   async logout(redirectUri = null) {
-    // Check if config is available
-    if (!this.config || !this.config.clientId) {
-      console.warn('⚠️ Cannot logout: Keycloak not properly initialized')
-      // Just clear local storage and reload
-      localStorage.removeItem('auth_tokens')
-      localStorage.removeItem('auth_user')
-      window.location.reload()
-      return
-    }
-
     const logoutRedirectUri = redirectUri || this.getRedirectUri()
     
     const params = new URLSearchParams({

@@ -17,7 +17,7 @@
 
     <div class="auth-buttons">
       <button 
-        @click="loginWithGoogle" 
+        @click="handleGoogleLogin" 
         :disabled="isLoading"
         class="btn btn-primary"
       >
@@ -61,24 +61,33 @@
 </template>
 
 <script>
-import { ref, onMounted, inject } from 'vue'
+import { ref, onMounted } from 'vue'
+import { useAuth } from '@/composables/useAuth'
 
 export default {
   name: 'LoginView',
   setup() {
-    const keycloak = inject('keycloak')
+    const { 
+      loginWithGoogle, 
+      login, 
+      isLoading: authLoading, 
+      error: authError,
+      clearError: clearAuthError,
+      isAuthenticated
+    } = useAuth()
+    
     const isLoading = ref(false)
     const error = ref(null)
     const showDebug = ref(false)
     const debugInfo = ref({})
 
-    const loginWithGoogle = async () => {
+    const handleGoogleLogin = async () => {
       isLoading.value = true
       error.value = null
 
       try {
         console.log('🚀 Starting Google login...')
-        await keycloak.loginWithGoogle()
+        await loginWithGoogle()
       } catch (err) {
         console.error('Google login failed:', err)
         error.value = err.message || 'Google login failed'
@@ -92,7 +101,7 @@ export default {
 
       try {
         console.log('🔑 Starting regular login...')
-        await keycloak.login()
+        await login()
       } catch (err) {
         console.error('Regular login failed:', err)
         error.value = err.message || 'Login failed'
@@ -113,9 +122,9 @@ export default {
 
     const refreshDebugInfo = () => {
       debugInfo.value = {
-        isInitialized: keycloak.isInitialized,
-        isAuthenticated: keycloak.isAuthenticated(),
-        config: keycloak.config,
+        isAuthenticated: isAuthenticated.value,
+        authLoading: authLoading.value,
+        authError: authError.value,
         userAgent: navigator.userAgent,
         timestamp: new Date().toISOString(),
         location: {
@@ -136,7 +145,7 @@ export default {
       error,
       showDebug,
       debugInfo,
-      loginWithGoogle,
+      handleGoogleLogin,
       regularLogin,
       clearError,
       toggleDebug,

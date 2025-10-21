@@ -2,14 +2,35 @@
   <div id="app">
     <Header />
     <main>
-      <component :is="currentView" />
+      <!-- Loading state during auth initialization -->
+      <div v-if="isLoading && !isInitialized" class="loading-screen">
+        <div class="loading-content">
+          <div class="spinner"></div>
+          <p>Initializing authentication...</p>
+        </div>
+      </div>
+      
+      <!-- Main content based on auth state -->
+      <component :is="currentView" v-else />
+      
+      <!-- Global error handling -->
+      <div v-if="error && !isLoading" class="global-error">
+        <div class="error-content">
+          <h3>Authentication Error</h3>
+          <p>{{ error }}</p>
+          <button @click="clearError" class="btn btn-primary">
+            Dismiss
+          </button>
+        </div>
+      </div>
     </main>
     <Footer />
   </div>
 </template>
 
 <script>
-import { ref, onMounted, inject } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useAuth } from '@/composables/useAuth'
 import Header from './components/Header.vue'
 import Footer from './components/Footer.vue'
 import LoginView from './views/LoginView.vue'
@@ -24,35 +45,38 @@ export default {
     DashboardView
   },
   setup() {
-    const keycloak = inject('keycloak')
-    const currentView = ref('LoginView')
-    const isLoading = ref(true)
+    // Use our new Pinia-based auth system
+    const {
+      isAuthenticated,
+      isLoading,
+      error,
+      initialize,
+      clearError,
+      isInitialized
+    } = useAuth()
 
-    const checkAuthStatus = () => {
-      if (keycloak.isAuthenticated()) {
-        currentView.value = 'DashboardView'
-      } else {
-        currentView.value = 'LoginView'
+    // Determine current view based on auth state
+    const currentView = computed(() => {
+      return isAuthenticated.value ? 'DashboardView' : 'LoginView'
+    })
+
+    // Initialize authentication on app mount
+    onMounted(async () => {
+      try {
+        console.log('🚀 Initializing app...')
+        await initialize()
+        console.log('✅ App initialized successfully')
+      } catch (err) {
+        console.error('❌ App initialization failed:', err)
       }
-      isLoading.value = false
-    }
-
-    onMounted(() => {
-      // Check authentication status
-      checkAuthStatus()
-
-      // Listen for authentication changes
-      const interval = setInterval(() => {
-        checkAuthStatus()
-      }, 1000)
-
-      // Cleanup
-      return () => clearInterval(interval)
     })
 
     return {
       currentView,
-      isLoading
+      isLoading,
+      isInitialized,
+      error,
+      clearError
     }
   }
 }
@@ -183,6 +207,67 @@ main {
 .loading {
   color: #6c757d;
   font-style: italic;
+}
+
+/* Loading screen */
+.loading-screen {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
+
+.loading-content {
+  text-align: center;
+  color: white;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top: 3px solid white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Global error */
+.global-error {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.error-content {
+  background: white;
+  padding: 2rem;
+  border-radius: 8px;
+  max-width: 400px;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.error-content h3 {
+  color: #dc3545;
+  margin-bottom: 1rem;
+}
+
+.error-content p {
+  margin-bottom: 1.5rem;
+  color: #666;
 }
 
 @media (max-width: 600px) {

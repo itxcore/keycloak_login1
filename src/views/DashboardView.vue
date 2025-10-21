@@ -132,12 +132,13 @@
 </template>
 
 <script>
-import { ref, onMounted, onUnmounted, inject, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { useAuth } from '@/composables/useAuth'
 
 export default {
   name: 'DashboardView',
   setup() {
-    const keycloak = inject('keycloak')
+    const { user, getAccessToken, isTokenExpired } = useAuth()
     const userProfile = ref(null)
     const loading = ref(false)
     const error = ref(null)
@@ -147,9 +148,25 @@ export default {
 
     let timeInterval = null
 
-    const tokenData = computed(() => keycloak.getToken())
-    const userRoles = computed(() => keycloak.getUserRoles())
-    const isTokenValid = computed(() => !keycloak.isTokenExpired())
+    const tokenData = computed(() => {
+      const token = getAccessToken()
+      if (!token) return null
+      
+      try {
+        // Decode JWT token to get payload
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        return payload
+      } catch (err) {
+        console.error('Failed to decode token:', err)
+        return null
+      }
+    })
+    
+    const userRoles = computed(() => {
+      return user.value?.roles || []
+    })
+    
+    const isTokenValid = computed(() => !isTokenExpired.value)
     
     const timeUntilExpiry = computed(() => {
       if (!tokenData.value?.exp) return 'Unknown'
@@ -171,7 +188,18 @@ export default {
 
       try {
         console.log('👤 Loading user profile...')
-        userProfile.value = await keycloak.getUserProfile()
+        // Use the auth store's user data instead of calling Keycloak directly
+        const { user, refreshProfile } = useAuth()
+        
+        if (user.value) {
+          userProfile.value = user.value
+          console.log('✅ User profile loaded from auth store')
+        } else {
+          // Try to refresh profile if not available
+          await refreshProfile()
+          userProfile.value = user.value
+          console.log('✅ User profile refreshed and loaded')
+        }
       } catch (err) {
         console.error('Failed to load user profile:', err)
         error.value = err.message || 'Failed to load user profile'
@@ -185,7 +213,8 @@ export default {
 
       try {
         console.log('🔄 Refreshing token...')
-        await keycloak.updateToken()
+        const { forceTokenRefresh } = useAuth()
+        await forceTokenRefresh()
         console.log('✅ Token refreshed successfully')
       } catch (err) {
         console.error('Token refresh failed:', err)
@@ -198,7 +227,8 @@ export default {
     const logout = async () => {
       try {
         console.log('🚪 Logging out...')
-        await keycloak.logout()
+        const { logout: authLogout } = useAuth()
+        await authLogout()
       } catch (err) {
         console.error('Logout failed:', err)
         error.value = err.message || 'Logout failed'

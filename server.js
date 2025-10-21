@@ -8,6 +8,9 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 
+// Load environment variables
+require('dotenv').config();
+
 const app = express();
 const PORT = 8000;
 
@@ -35,10 +38,10 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
-// Rate limiting
+// Rate limiting (relaxed for development)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 1000, // Increased for development - Limit each IP to 1000 requests per windowMs
   message: {
     error: 'Too many requests from this IP, please try again later.',
     retryAfter: '15 minutes'
@@ -49,10 +52,10 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-// Stricter rate limiting for authentication endpoints
+// Relaxed rate limiting for authentication endpoints in development
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each IP to 10 auth requests per windowMs
+  max: 100, // Increased for development - Limit each IP to 100 auth requests per windowMs
   message: {
     error: 'Too many authentication attempts, please try again later.',
     retryAfter: '15 minutes'
@@ -74,8 +77,19 @@ app.use(session({
   }
 }));
 
-// CORS configuration
-app.use(cors());
+// CORS configuration - explicit for development
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:3001', 
+    'http://localhost:3002',
+    'http://localhost:5173',
+    'http://localhost:8000'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 
 // Morgan logging for advanced debugging
 app.use(morgan('combined', {
@@ -159,6 +173,140 @@ app.get('/logout', (req, res) => {
   });
 });
 
+// Keycloak configuration API endpoint
+app.get('/api/keycloak-config', (req, res) => {
+  debug('Providing Keycloak configuration');
+  res.json({
+    url: process.env.KEYCLOAK_URL || 'https://auth.utribe.app',
+    realm: process.env.KEYCLOAK_REALM || 'utribe',
+    clientId: process.env.KEYCLOAK_CLIENT_ID || 'giftportal',
+    isPublicClient: true,
+    checkLoginIframe: false,
+    silentCheckSsoRedirectUri: undefined
+  });
+});
+
+// Token exchange API endpoint
+app.post('/api/token-exchange', express.json(), async (req, res) => {
+  debug('Token exchange requested');
+  try {
+    const { code, codeVerifier, redirectUri } = req.body;
+    
+    if (!code || !codeVerifier || !redirectUri) {
+      return res.status(400).json({
+        error: 'missing_parameters',
+        error_description: 'Missing required parameters: code, codeVerifier, redirectUri'
+      });
+    }
+
+    // Perform actual token exchange with Keycloak
+    const keycloakUrl = process.env.KEYCLOAK_URL || 'https://auth.utribe.app';
+    const keycloakRealm = process.env.KEYCLOAK_REALM || 'utribe';
+    const clientId = process.env.KEYCLOAK_CLIENT_ID || 'giftportal';
+    
+    const tokenUrl = `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/token`;
+    
+    console.log('🔄 Exchanging code for tokens with Keycloak...');
+    console.log('📍 Token URL:', tokenUrl);
+    console.log('🆔 Client ID:', clientId);
+    
+    const tokenResponse = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: clientId,
+        code: code,
+        code_verifier: codeVerifier,
+        redirect_uri: redirectUri
+      })
+    });
+
+    if (!tokenResponse.ok) {
+      const errorData = await tokenResponse.text();
+      console.error('❌ Keycloak token exchange failed:', errorData);
+      return res.status(tokenResponse.status).json({
+        error: 'token_exchange_failed',
+        error_description: `Keycloak returned ${tokenResponse.status}: ${errorData}`
+      });
+    }
+
+    const tokenData = await tokenResponse.json();
+    console.log('✅ Successfully exchanged code for tokens');
+    console.log('🔑 Full token response:', JSON.stringify(tokenData, null, 2));
+    console.log('🔑 Token type:', tokenData.token_type);
+    console.log('⏰ Expires in:', tokenData.expires_in, 'seconds');
+    console.log('⏰ Expires in type:', typeof tokenData.expires_in);
+    console.log('🔑 Object keys:', Object.keys(tokenData));
+    
+    res.json(tokenData);
+  } catch (error) {
+    console.error('Token exchange error:', error);
+    res.status(500).json({
+      error: 'server_error',
+      error_description: 'Token exchange failed: ' + error.message
+    });
+  }
+});
+
+// Token refresh API endpoint  
+app.post('/api/token-refresh', express.json(), async (req, res) => {
+  debug('Token refresh requested');
+  try {
+    const { refreshToken } = req.body;
+    
+    if (!refreshToken) {
+      return res.status(400).json({
+        error: 'missing_refresh_token',
+        error_description: 'Missing refresh token'
+      });
+    }
+
+    // Perform actual token refresh with Keycloak
+    const keycloakUrl = process.env.KEYCLOAK_URL || 'https://auth.utribe.app';
+    const keycloakRealm = process.env.KEYCLOAK_REALM || 'utribe';
+    const clientId = process.env.KEYCLOAK_CLIENT_ID || 'giftportal';
+    
+    const tokenUrl = `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/token`;
+    
+    console.log('🔄 Refreshing tokens with Keycloak...');
+    
+    const tokenResponse = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        refresh_token: refreshToken
+      })
+    });
+
+    if (!tokenResponse.ok) {
+      const errorData = await tokenResponse.text();
+      console.error('❌ Keycloak token refresh failed:', errorData);
+      return res.status(tokenResponse.status).json({
+        error: 'token_refresh_failed',
+        error_description: `Keycloak returned ${tokenResponse.status}: ${errorData}`
+      });
+    }
+
+    const tokenData = await tokenResponse.json();
+    console.log('✅ Successfully refreshed tokens');
+    
+    res.json(tokenData);
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(500).json({
+      error: 'server_error',
+      error_description: 'Token refresh failed'
+    });
+  }
+});
+
 // User info API endpoint
 app.get('/api/userinfo', keycloak.protect(), (req, res) => {
   debug('Fetching user info via API');
@@ -224,6 +372,9 @@ app.listen(PORT, 'localhost', () => {
   console.log('   - GET /login (Initiate login)');
   console.log('   - GET /logout (Logout)');
   console.log('   - GET /protected (Protected area)');
+  console.log('   - GET /api/keycloak-config (Keycloak configuration)');
+  console.log('   - POST /api/token-exchange (OAuth token exchange)');
+  console.log('   - POST /api/token-refresh (Token refresh)');
   console.log('   - GET /api/userinfo (User info API)');
   console.log('   - GET /health (Health check)');
   

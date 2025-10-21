@@ -15,33 +15,12 @@
 </template>
 
 <script>
-import { ref, onMounted, inject } from 'vue'
+import { useAuth } from '@/composables/useAuth'
 
 export default {
   name: 'Header',
   setup() {
-    const keycloak = inject('keycloak')
-    const isAuthenticated = ref(false)
-
-    const updateAuthStatus = () => {
-      isAuthenticated.value = keycloak.isAuthenticated()
-    }
-
-    const logout = async () => {
-      try {
-        await keycloak.logout()
-      } catch (error) {
-        console.error('Logout failed:', error)
-      }
-    }
-
-    onMounted(() => {
-      updateAuthStatus()
-      
-      // Update auth status periodically
-      const interval = setInterval(updateAuthStatus, 1000)
-      return () => clearInterval(interval)
-    })
+    const { isAuthenticated, logout } = useAuth()
 
     return {
       isAuthenticated,

@@ -20,7 +20,7 @@ export default {
 
     const checkServerHealth = async () => {
       try {
-        const response = await fetch('/health')
+        const response = await fetch('http://localhost:8000/health')
         if (response.ok) {
           serverStatus.value = await response.json()
         }
