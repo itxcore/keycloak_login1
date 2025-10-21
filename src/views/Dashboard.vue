@@ -1,3 +1,4 @@
+```vue
 <template>
   <div class="dashboard">
     <div class="dashboard-header">
@@ -552,3 +553,4 @@ const handleLogout = async () => {
   }
 }
 </style>
+```

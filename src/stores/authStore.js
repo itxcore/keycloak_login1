@@ -2,6 +2,9 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { CSPSafeKeycloakService } from '@/services/csp-safe-keycloak.js'
 
+// Global flag to prevent multiple store initializations
+let globalStoreInitialized = false
+
 export const useAuthStore = defineStore('auth', () => {
   // =============================================
   // STATE - Reactive References
@@ -19,6 +22,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = ref(false)
   const isLoading = ref(false)
   const isInitialized = ref(false)
+  const isInitializing = ref(false)
   
   // Error handling
   const error = ref(null)
@@ -76,286 +80,6 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // =============================================
-  // ACTIONS - Authentication Methods
-  // =============================================
-  
-  /**
-   * Initialize the authentication store
-   */
-  const initialize = async () => {
-    console.log('🎯 Initialize called, isInitialized:', isInitialized.value)
-    if (isInitialized.value) {
-      console.log('⏭️ Already initialized, skipping')
-      return
-    }
-    
-    try {
-      console.log('🚀 Starting authentication initialization...')
-      isLoading.value = true
-      error.value = null
-      
-      // Initialize Keycloak service
-      await initializeKeycloak()
-      
-      // Check if Keycloak service already processed an OAuth callback and has tokens
-      if (keycloakService.tokens) {
-        console.log('🔄 Found tokens in Keycloak service (OAuth callback was processed)')
-        console.log('📦 Setting tokens from Keycloak service:', keycloakService.tokens)
-        console.log('📦 keycloakService.tokens type:', typeof keycloakService.tokens)
-        console.log('📦 keycloakService.tokens keys:', Object.keys(keycloakService.tokens || {}))
-        
-        try {
-          await setTokens(keycloakService.tokens)
-          console.log('✅ setTokens completed successfully')
-        } catch (tokenError) {
-          console.error('❌ setTokens failed:', tokenError)
-          throw tokenError
-        }
-        
-        await refreshUserProfile()
-        
-        console.log('🔐 Before setting isAuthenticated = true:')
-        console.log('  - accessToken exists:', !!accessToken.value)
-        console.log('  - tokenExpiresAt:', tokenExpiresAt.value)
-        console.log('  - current time:', Date.now())
-        console.log('  - isTokenExpired:', isTokenExpired.value)
-        console.log('  - user:', user.value)
-        
-        isAuthenticated.value = true
-        
-        console.log('🔐 After setting isAuthenticated = true:')
-        console.log('  - isAuthenticated:', isAuthenticated.value)
-        
-        console.log('✅ OAuth callback processed successfully')
-        console.log('🔐 Final isAuthenticated:', isAuthenticated.value)
-        console.log('👤 Final User:', user.value)
-        
-        isInitialized.value = true
-        console.log('🏁 isInitialized set to true, returning from OAuth callback processing')
-        return
-      }
-      
-      // Check if this is an OAuth callback (has 'code' parameter) - legacy check
-      const urlParams = new URLSearchParams(window.location.search)
-      if (urlParams.has('code')) {
-        console.log('🔄 Detected OAuth callback via URL parameters, processing...')
-        const success = await keycloakService.handleOAuthCallback()
-        
-        if (success && keycloakService.tokens) {
-          console.log('📦 Setting tokens from OAuth callback:', keycloakService.tokens)
-          console.log('📦 keycloakService.tokens type:', typeof keycloakService.tokens)
-          console.log('📦 keycloakService.tokens keys:', Object.keys(keycloakService.tokens || {}))
-          
-          try {
-            await setTokens(keycloakService.tokens)
-            console.log('✅ setTokens completed successfully')
-          } catch (tokenError) {
-            console.error('❌ setTokens failed:', tokenError)
-            throw tokenError
-          }
-          
-          await refreshUserProfile()
-          
-          console.log('🔐 Before setting isAuthenticated = true:')
-          console.log('  - accessToken exists:', !!accessToken.value)
-          console.log('  - tokenExpiresAt:', tokenExpiresAt.value)
-          console.log('  - current time:', Date.now())
-          console.log('  - isTokenExpired:', isTokenExpired.value)
-          console.log('  - user:', user.value)
-          
-          isAuthenticated.value = true
-          
-          console.log('🔐 After setting isAuthenticated = true:')
-          console.log('  - isAuthenticated:', isAuthenticated.value)
-          
-          // Clean up the URL by removing OAuth parameters
-          const cleanUrl = window.location.origin + window.location.pathname
-          window.history.replaceState({}, document.title, cleanUrl)
-          
-          console.log('✅ OAuth callback processed successfully')
-          console.log('🔐 Final isAuthenticated:', isAuthenticated.value)
-          console.log('👤 Final User:', user.value)
-          
-          isInitialized.value = true
-          console.log('🏁 isInitialized set to true, returning from OAuth callback processing')
-          return
-        }
-      }
-      
-      // Load persisted tokens from localStorage (only if not OAuth callback)
-      loadPersistedState()
-      
-      // Check if we have valid tokens
-      if (accessToken.value && !isTokenExpired.value) {
-        await refreshUserProfile()
-        isAuthenticated.value = true
-      } else if (refreshToken.value) {
-        // Try to refresh the token
-        await refreshAccessToken()
-      }
-      
-      // Set up automatic token refresh
-      setupTokenRefresh()
-      
-      isInitialized.value = true
-    } catch (err) {
-      console.error('❌ Auth store initialization failed:', err)
-      error.value = err.message
-      
-      // Don't call logout() during initialization to avoid infinite loops
-      // Just clear the auth state without redirecting
-      clearAuthState()
-      
-      // Still mark as initialized to prevent infinite loops
-      isInitialized.value = true
-    } finally {
-      isLoading.value = false
-    }
-  }
-  
-  /**
-   * Login with Google via Keycloak
-   */
-  const loginWithGoogle = async (options = {}) => {
-    try {
-      isLoading.value = true
-      error.value = null
-      lastLoginAttempt.value = new Date()
-      
-      await initializeKeycloak()
-      await keycloakService.loginWithGoogle(options)
-      
-      // The actual token handling will happen in handleAuthCallback
-    } catch (err) {
-      console.error('❌ Google login failed:', err)
-      error.value = err.message
-      throw err
-    } finally {
-      isLoading.value = false
-    }
-  }
-  
-  /**
-   * Regular login (username/password)
-   */
-  const login = async (options = {}) => {
-    try {
-      isLoading.value = true
-      error.value = null
-      lastLoginAttempt.value = new Date()
-      
-      await initializeKeycloak()
-      await keycloakService.login(options)
-      
-      // The actual token handling will happen in handleAuthCallback
-    } catch (err) {
-      console.error('❌ Login failed:', err)
-      error.value = err.message
-      throw err
-    } finally {
-      isLoading.value = false
-    }
-  }
-  
-  /**
-   * Handle OAuth callback from Keycloak
-   */
-  const handleAuthCallback = async () => {
-    try {
-      isLoading.value = true
-      error.value = null
-      
-      await initializeKeycloak()
-      const success = await keycloakService.handleOAuthCallback()
-      
-      if (success && keycloakService.tokens) {
-        await setTokens(keycloakService.tokens)
-        await refreshUserProfile()
-        isAuthenticated.value = true
-        
-        console.log('✅ Authentication successful')
-        return true
-      }
-      
-      return false
-    } catch (err) {
-      console.error('❌ Auth callback failed:', err)
-      error.value = err.message
-      await logout()
-      throw err
-    } finally {
-      isLoading.value = false
-    }
-  }
-  
-  /**
-   * Logout user and clear all data
-   */
-  const logout = async (redirectToKeycloak = true) => {
-    try {
-      isLoading.value = true
-      
-      // Clear local state
-      clearAuthState()
-      
-      // Logout from Keycloak if requested
-      if (redirectToKeycloak && keycloakService) {
-        await keycloakService.logout()
-      }
-      
-      console.log('✅ Logout successful')
-    } catch (err) {
-      console.error('❌ Logout error:', err)
-      // Clear state anyway
-      clearAuthState()
-    } finally {
-      isLoading.value = false
-    }
-  }
-  
-  /**
-   * Refresh access token using refresh token
-   */
-  const refreshAccessToken = async () => {
-    if (!refreshToken.value) {
-      throw new Error('No refresh token available')
-    }
-    
-    try {
-      await initializeKeycloak()
-      const newTokens = await keycloakService.refreshToken(refreshToken.value)
-      
-      if (newTokens) {
-        await setTokens(newTokens)
-        return newTokens.access_token
-      }
-      
-      throw new Error('Token refresh failed')
-    } catch (err) {
-      console.error('❌ Token refresh failed:', err)
-      await logout(false) // Don't redirect to Keycloak on refresh failure
-      throw err
-    }
-  }
-  
-  /**
-   * Refresh user profile from Keycloak
-   */
-  const refreshUserProfile = async () => {
-    if (!accessToken.value) return
-    
-    try {
-      await initializeKeycloak()
-      const userInfo = await keycloakService.getUserInfo()
-      user.value = userInfo
-      persistUserData()
-    } catch (err) {
-      console.error('❌ Failed to refresh user profile:', err)
-      // Don't throw - this is not critical
-    }
-  }
-
-  // =============================================
   // INTERNAL HELPER METHODS
   // =============================================
   
@@ -364,9 +88,6 @@ export const useAuthStore = defineStore('auth', () => {
    */
   const setTokens = async (tokens) => {
     console.log('🔑 setTokens called with:', tokens)
-    console.log('🔑 Token object keys:', Object.keys(tokens || {}))
-    console.log('🔑 expires_in value:', tokens?.expires_in)
-    console.log('🔑 expires_in type:', typeof tokens?.expires_in)
     
     accessToken.value = tokens.access_token
     refreshToken.value = tokens.refresh_token
@@ -376,21 +97,6 @@ export const useAuthStore = defineStore('auth', () => {
     if (tokens.expires_in) {
       tokenExpiresAt.value = Date.now() + (tokens.expires_in * 1000)
       console.log('⏰ Token expires at:', new Date(tokenExpiresAt.value).toISOString())
-      console.log('⏰ Token expires in seconds:', tokens.expires_in)
-    } else {
-      console.warn('⚠️ No expires_in found in tokens object')
-      // Try to extract expiration from access token if it's a JWT
-      if (tokens.access_token) {
-        try {
-          const payload = JSON.parse(atob(tokens.access_token.split('.')[1]))
-          if (payload.exp) {
-            tokenExpiresAt.value = payload.exp * 1000 // JWT exp is in seconds
-            console.log('⏰ Extracted expiration from JWT:', new Date(tokenExpiresAt.value).toISOString())
-          }
-        } catch (err) {
-          console.warn('⚠️ Could not extract expiration from JWT:', err)
-        }
-      }
     }
     
     // Extract user info from ID token
@@ -418,12 +124,14 @@ export const useAuthStore = defineStore('auth', () => {
     
     // Persist to localStorage
     persistAuthData()
+    console.log('✅ setTokens completed successfully')
   }
   
   /**
    * Clear all authentication state
    */
   const clearAuthState = () => {
+    console.log('🧹 Clearing auth state...')
     accessToken.value = null
     refreshToken.value = null
     idToken.value = null
@@ -442,6 +150,8 @@ export const useAuthStore = defineStore('auth', () => {
       clearTimeout(sessionTimeout.value)
       sessionTimeout.value = null
     }
+    
+    console.log('✅ Auth state cleared')
   }
   
   /**
@@ -511,6 +221,8 @@ export const useAuthStore = defineStore('auth', () => {
    */
   const loadPersistedState = () => {
     try {
+      console.log('📊 Loading persisted auth state...')
+      
       // Load tokens
       const storedTokens = localStorage.getItem('auth_tokens')
       if (storedTokens) {
@@ -532,21 +244,221 @@ export const useAuthStore = defineStore('auth', () => {
         user.value = JSON.parse(storedUser)
       }
       
-      // Set authentication status based on token validity
+      // Check token validity
       const tokenValid = !!(accessToken.value && !isTokenExpired.value)
-      console.log('📊 loadPersistedState token validation:')
-      console.log('  - accessToken exists:', !!accessToken.value)
-      console.log('  - isTokenExpired:', isTokenExpired.value)
-      console.log('  - tokenExpiresAt:', tokenExpiresAt.value)
-      console.log('  - current time:', Date.now())
-      console.log('  - calculated tokenValid:', tokenValid)
-      console.log('  - current isAuthenticated:', isAuthenticated.value)
+      console.log('📊 Token validity check:', {
+        hasAccessToken: !!accessToken.value,
+        isExpired: isTokenExpired.value,
+        tokenValid
+      })
       
+      // Set authentication status based on token validity
       isAuthenticated.value = tokenValid
-      console.log('  - new isAuthenticated:', isAuthenticated.value)
+      
+      return tokenValid
     } catch (err) {
       console.error('❌ Failed to load persisted auth state:', err)
       clearAuthState()
+      return false
+    }
+  }
+
+  // =============================================
+  // ACTIONS - Authentication Methods
+  // =============================================
+  
+  /**
+   * Initialize the authentication store
+   */
+  const initialize = async () => {
+    console.log('🔄 AUTH STORE: Starting initialization...')
+    console.log('🔄 AUTH STORE: Global initialized?', globalStoreInitialized)
+    console.log('🔄 AUTH STORE: Store initialized?', isInitialized.value)
+    console.log('🔄 AUTH STORE: Store initializing?', isInitializing.value)
+    
+    // Prevent multiple initializations
+    if (globalStoreInitialized || isInitialized.value || isInitializing.value) {
+      console.log('⚠️ AUTH STORE: Already initialized or initializing, skipping...')
+      return
+    }
+    
+    try {
+      isInitializing.value = true
+      globalStoreInitialized = true
+      
+      console.log('🔄 AUTH STORE: Initializing Keycloak service...')
+      
+      // First, initialize the Keycloak service
+      await initializeKeycloak()
+      
+      console.log('🔄 AUTH STORE: Checking for OAuth callback tokens...')
+      
+      // Check if we have tokens in the Keycloak service (from OAuth callback)
+      if (keycloakService.tokens && keycloakService.accessToken) {
+        console.log('🔄 AUTH STORE: Found OAuth callback tokens!')
+        console.log('📦 AUTH STORE: Setting tokens from Keycloak service')
+        
+        // Set tokens from the Keycloak service
+        await setTokens(keycloakService.tokens)
+        
+        // Set user info if available
+        if (keycloakService.userInfo) {
+          user.value = keycloakService.userInfo
+          console.log('👤 AUTH STORE: Set user from Keycloak service')
+        }
+        
+        // Set authentication state
+        isAuthenticated.value = true
+        console.log('🔐 AUTH STORE: Authentication state set to TRUE')
+        
+        isInitialized.value = true
+        console.log('✅ AUTH STORE: OAuth callback processing complete')
+        return
+      }
+      
+      console.log('🔄 AUTH STORE: No OAuth callback, checking persisted tokens...')
+      
+      // If no OAuth callback, check for persisted tokens
+      const hasPersistedTokens = loadPersistedState()
+      
+      if (hasPersistedTokens && !isTokenExpired.value) {
+        console.log('✅ AUTH STORE: Using persisted authentication state')
+        // Try to refresh user profile
+        try {
+          await refreshUserProfile()
+        } catch (error) {
+          console.warn('⚠️ AUTH STORE: Failed to refresh user profile:', error)
+        }
+      } else {
+        console.log('ℹ️ AUTH STORE: No valid authentication state found')
+        // DON'T call logout here - it causes loops
+        clearAuthState()
+      }
+      
+    } catch (error) {
+      console.error('❌ AUTH STORE: Initialization failed:', error)
+      clearAuthState()
+      globalStoreInitialized = false // Reset on error
+    } finally {
+      isInitialized.value = true
+      isInitializing.value = false
+      console.log('🏁 AUTH STORE: Initialization completed')
+    }
+  }
+  
+  /**
+   * Login with Google via Keycloak
+   */
+  const loginWithGoogle = async (options = {}) => {
+    try {
+      isLoading.value = true
+      error.value = null
+      lastLoginAttempt.value = new Date()
+      
+      await initializeKeycloak()
+      await keycloakService.loginWithGoogle(options)
+      
+      // The actual token handling will happen in initialize
+    } catch (err) {
+      console.error('❌ Google login failed:', err)
+      error.value = err.message
+      throw err
+    } finally {
+      isLoading.value = false
+    }
+  }
+  
+  /**
+   * Regular login (username/password)
+   */
+  const login = async (options = {}) => {
+    try {
+      isLoading.value = true
+      error.value = null
+      lastLoginAttempt.value = new Date()
+      
+      await initializeKeycloak()
+      await keycloakService.login(options)
+      
+      // The actual token handling will happen in initialize
+    } catch (err) {
+      console.error('❌ Login failed:', err)
+      error.value = err.message
+      throw err
+    } finally {
+      isLoading.value = false
+    }
+  }
+  
+  /**
+   * Logout user and clear all data
+   */
+  const logout = async (redirectToKeycloak = false) => {
+    try {
+      console.log('🚪 AUTH STORE: Starting logout...')
+      isLoading.value = true
+      
+      // Clear local state first
+      clearAuthState()
+      
+      // Reset global flag
+      globalStoreInitialized = false
+      
+      // Logout from Keycloak if requested
+      if (redirectToKeycloak && keycloakService) {
+        await keycloakService.logout()
+      }
+      
+      console.log('✅ AUTH STORE: Logout successful')
+    } catch (err) {
+      console.error('❌ AUTH STORE: Logout error:', err)
+      // Clear state anyway
+      clearAuthState()
+      globalStoreInitialized = false
+    } finally {
+      isLoading.value = false
+    }
+  }
+  
+  /**
+   * Refresh access token using refresh token
+   */
+  const refreshAccessToken = async () => {
+    if (!refreshToken.value) {
+      throw new Error('No refresh token available')
+    }
+    
+    try {
+      await initializeKeycloak()
+      const newTokens = await keycloakService.refreshToken(refreshToken.value)
+      
+      if (newTokens) {
+        await setTokens(newTokens)
+        return newTokens.access_token
+      }
+      
+      throw new Error('Token refresh failed')
+    } catch (err) {
+      console.error('❌ Token refresh failed:', err)
+      await logout(false) // Don't redirect to Keycloak on refresh failure
+      throw err
+    }
+  }
+  
+  /**
+   * Refresh user profile from Keycloak
+   */
+  const refreshUserProfile = async () => {
+    if (!accessToken.value) return
+    
+    try {
+      await initializeKeycloak()
+      const userInfo = await keycloakService.getUserInfo()
+      user.value = userInfo
+      persistUserData()
+    } catch (err) {
+      console.error('❌ Failed to refresh user profile:', err)
+      // Don't throw - this is not critical
     }
   }
 
@@ -554,32 +466,9 @@ export const useAuthStore = defineStore('auth', () => {
   // WATCHERS - Reactive Side Effects
   // =============================================
   
-  // Watch for token expiration
-  watch(isTokenExpired, (expired) => {
-    if (expired && isAuthenticated.value) {
-      console.log('🔄 Token expired, attempting refresh...')
-      refreshAccessToken().catch(() => {
-        console.log('❌ Token refresh failed, logging out...')
-        logout(false)
-      })
-    }
-  })
+  // REMOVE these watchers as they might be causing loops
+  // We'll handle auth state changes manually in the initialize method
   
-  // Watch for authentication state changes
-  watch(isAuthenticated, (authenticated, oldValue) => {
-    console.log(`🔄 isAuthenticated changed: ${oldValue} → ${authenticated}`)
-    console.trace('Authentication state change trace:')
-    
-    if (authenticated) {
-      setupTokenRefresh()
-    } else {
-      if (sessionTimeout.value) {
-        clearTimeout(sessionTimeout.value)
-        sessionTimeout.value = null
-      }
-    }
-  })
-
   // =============================================
   // RETURN PUBLIC API
   // =============================================
@@ -607,7 +496,6 @@ export const useAuthStore = defineStore('auth', () => {
     initialize,
     loginWithGoogle,
     login,
-    handleAuthCallback,
     logout,
     refreshAccessToken,
     refreshUserProfile,

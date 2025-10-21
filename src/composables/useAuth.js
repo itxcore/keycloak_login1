@@ -1,17 +1,19 @@
-﻿import { computed } from 'vue'
+import { computed } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
+import { useRouter } from 'vue-router'
 
 /**
  * Vue Composable for Authentication
  * 
  * Provides a convenient API for components to interact with authentication
  * state and actions through the Pinia auth store.
- * 
- * Simplified version without Vue Router dependency.
  */
 export function useAuth() {
   const authStore = useAuthStore()
+  const router = useRouter()
 
+  console.log('🔄 useAuth called - isInitialized:', authStore.isInitialized)
+  
   // =============================================
   // REACTIVE STATE
   // =============================================
@@ -19,11 +21,11 @@ export function useAuth() {
   const user = computed(() => authStore.user)
   const isAuthenticated = computed(() => authStore.isAuthenticated)
   const isLoading = computed(() => authStore.isLoading)
+  const isInitialized = computed(() => authStore.isInitialized) // ← This was missing!
   const error = computed(() => authStore.error)
   const userDisplayName = computed(() => authStore.userDisplayName)
   const userInitials = computed(() => authStore.userInitials)
   const isTokenExpiringSoon = computed(() => authStore.isTokenExpiringSoon)
-  const isInitialized = computed(() => authStore.isInitialized)
 
   // =============================================
   // AUTHENTICATION ACTIONS
@@ -36,7 +38,7 @@ export function useAuth() {
     try {
       await authStore.initialize()
     } catch (error) {
-      console.error(' Auth initialization failed:', error)
+      console.error('❌ Auth initialization failed:', error)
       throw error
     }
   }
@@ -48,7 +50,7 @@ export function useAuth() {
     try {
       await authStore.loginWithGoogle()
     } catch (error) {
-      console.error(' Google login failed:', error)
+      console.error('❌ Google login failed:', error)
       throw error
     }
   }
@@ -60,7 +62,7 @@ export function useAuth() {
     try {
       await authStore.login(options)
     } catch (error) {
-      console.error(' Login failed:', error)
+      console.error('❌ Login failed:', error)
       throw error
     }
   }
@@ -72,16 +74,14 @@ export function useAuth() {
     try {
       await authStore.logout()
       
-      // For now, just reload the page to show login view
-      // In a router-based app, this would navigate to /login
       if (redirectToLogin) {
-        window.location.reload()
+        await router.push('/login')
       }
     } catch (error) {
-      console.error(' Logout failed:', error)
-      // Force page reload even if logout failed
+      console.error('❌ Logout failed:', error)
+      // Force redirect even if logout failed
       if (redirectToLogin) {
-        window.location.reload()
+        await router.push('/login')
       }
     }
   }
@@ -94,17 +94,16 @@ export function useAuth() {
       const success = await authStore.handleAuthCallback()
       
       if (success) {
-        // For now, just reload to show authenticated state
-        // In a router-based app, this would navigate to intended page
-        console.log(' Authentication successful - reloading page')
-        window.location.href = window.location.origin
+        // Redirect to intended page or dashboard
+        const redirectTo = sessionStorage.getItem('auth_redirect_after_login') || '/dashboard'
+        sessionStorage.removeItem('auth_redirect_after_login')
+        await router.push(redirectTo)
       }
       
       return success
     } catch (error) {
-      console.error(' Auth callback failed:', error)
-      // Reload to show login view on error
-      window.location.href = window.location.origin + '?error=callback_failed'
+      console.error('❌ Auth callback failed:', error)
+      await router.push('/login?error=callback_failed')
       throw error
     }
   }
@@ -116,7 +115,7 @@ export function useAuth() {
     try {
       await authStore.refreshUserProfile()
     } catch (error) {
-      console.error(' Profile refresh failed:', error)
+      console.error('❌ Profile refresh failed:', error)
       throw error
     }
   }
@@ -136,7 +135,7 @@ export function useAuth() {
    * Check if user has specific role
    */
   const hasRole = (role) => {
-    return authStore.hasRole(role)
+    return authStore.hasRole.value(role)
   }
 
   /**
@@ -151,6 +150,35 @@ export function useAuth() {
    */
   const hasAllRoles = (roles) => {
     return roles.every(role => hasRole(role))
+  }
+
+  // =============================================
+  // NAVIGATION HELPERS
+  // =============================================
+  
+  /**
+   * Redirect to login if not authenticated
+   */
+  const requireAuth = (redirectTo = null) => {
+    if (!isAuthenticated.value) {
+      if (redirectTo) {
+        sessionStorage.setItem('auth_redirect_after_login', redirectTo)
+      }
+      router.push('/login')
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Redirect to dashboard if already authenticated
+   */
+  const redirectIfAuthenticated = (redirectTo = '/dashboard') => {
+    if (isAuthenticated.value) {
+      router.push(redirectTo)
+      return true
+    }
+    return false
   }
 
   // =============================================
@@ -178,7 +206,7 @@ export function useAuth() {
     try {
       await authStore.forceRefresh()
     } catch (error) {
-      console.error(' Force token refresh failed:', error)
+      console.error('❌ Force token refresh failed:', error)
       throw error
     }
   }
@@ -192,12 +220,12 @@ export function useAuth() {
     user,
     isAuthenticated,
     isLoading,
+    isInitialized, // ← This was missing in the return statement!
     error,
     userDisplayName,
     userInitials,
     isTokenExpired,
     isTokenExpiringSoon,
-    isInitialized,
     
     // Actions
     initialize,
@@ -212,6 +240,10 @@ export function useAuth() {
     hasRole,
     hasAnyRole,
     hasAllRoles,
+    
+    // Navigation helpers
+    requireAuth,
+    redirectIfAuthenticated,
     
     // Token management
     getAccessToken,

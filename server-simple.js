@@ -87,8 +87,7 @@ app.use(morgan('combined', {
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Serve keycloak-js from node_modules
-app.use('/js/keycloak.js', express.static(path.join(__dirname, 'node_modules/keycloak-js/dist/keycloak.js')));
+
 
 // Keycloak configuration endpoint for client-side
 app.get('/api/keycloak-config', (req, res) => {

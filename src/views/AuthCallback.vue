@@ -1,3 +1,4 @@
+```vue
 <template>
   <div class="auth-callback">
     <div class="callback-container">
@@ -213,3 +214,4 @@ p {
   }
 }
 </style>
+```

@@ -15,33 +15,7 @@ import { ref, onMounted } from 'vue'
 
 export default {
   name: 'Footer',
-  setup() {
-    const serverStatus = ref(null)
-
-    const checkServerHealth = async () => {
-      try {
-        const response = await fetch('http://localhost:8000/health')
-        if (response.ok) {
-          serverStatus.value = await response.json()
-        }
-      } catch (error) {
-        console.warn('Health check failed:', error)
-        serverStatus.value = { status: 'offline' }
-      }
-    }
-
-    onMounted(() => {
-      checkServerHealth()
-      
-      // Check health every 30 seconds
-      const interval = setInterval(checkServerHealth, 30000)
-      return () => clearInterval(interval)
-    })
-
-    return {
-      serverStatus
-    }
-  }
+  
 }
 </script>
 

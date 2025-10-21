@@ -3,60 +3,152 @@
  * 
  * This service handles Keycloak authentication without using iframes,
  * making it compatible with strict Content Security Policy (CSP) settings.
+ * Communicates directly with Keycloak server - no backend server required.
  * Designed for Vue 3 + Pinia integration.
  */
+
+// Global flag to prevent multiple callback processing across instances
+let globalCallbackProcessing = false
 
 export class CSPSafeKeycloakService {
   constructor() {
     this.config = null
     this.tokens = null
+    this.accessToken = null
+    this.refreshToken = null
+    this.idToken = null
+    this.userInfo = null
     this.isInitialized = false
+    this.isProcessingCallback = false
+  }
+
+  /**
+   * Check if current URL is an OAuth callback
+   */
+  isOAuthCallback() {
+    const urlParams = new URLSearchParams(window.location.search)
+    const hasCode = urlParams.has('code')
+    const hasState = urlParams.has('state')
+    
+    console.log('🔍 Checking if OAuth callback:', { hasCode, hasState, url: window.location.href })
+    return hasCode && hasState
   }
 
   /**
    * Initialize the Keycloak service
    */
   async init() {
-    if (this.isInitialized) return true
-    
     try {
-      console.log('🔧 Initializing Keycloak service...')
+      console.log('🔄 Initializing CSP-Safe Keycloak service...')
+      console.log('🔄 Service already initialized?', this.isInitialized)
+      console.log('🔄 Global callback processing?', globalCallbackProcessing)
       
-      // Load configuration from backend
-      this.config = await this.loadConfig()
-      
-      // Check if we're returning from authentication
-      const urlParams = new URLSearchParams(window.location.search)
-      if (urlParams.get('code') && urlParams.get('state')) {
-        console.log('🔄 Detected OAuth callback, processing...')
-        await this.handleOAuthCallback()
+      // Prevent multiple initializations
+      if (this.isInitialized) {
+        console.log('⚠️ Keycloak service already initialized, skipping...')
+        return
       }
       
-      this.isInitialized = true
+      // Load configuration
+      this.config = await this.loadConfig()
+      console.log('📡 Loaded Keycloak config:', this.config)
+      
+      // Check if this is an OAuth callback - ONLY process if it actually is one
+      if (this.isOAuthCallback() && !globalCallbackProcessing && !this.isProcessingCallback) {
+        console.log('🔄 Detected OAuth callback, processing...')
+        globalCallbackProcessing = true // Set global flag
+        this.isProcessingCallback = true // Set instance flag
+        
+        await this.handleOAuthCallback()
+        
+      } else if (this.isOAuthCallback() && (globalCallbackProcessing || this.isProcessingCallback)) {
+        console.log('⚠️ OAuth callback already being processed globally, skipping...')
+        
+      } else {
+        console.log('ℹ️ Not an OAuth callback, checking for persisted tokens...')
+        
+        // Try to load persisted tokens
+        this.loadPersistedTokens()
+      }
+      
       console.log('✅ Keycloak service initialized')
-      return true
+      this.isInitialized = true
     } catch (error) {
       console.error('❌ Keycloak initialization failed:', error)
+      globalCallbackProcessing = false // Reset global flag on error
+      this.isProcessingCallback = false // Reset instance flag on error
       throw error
     }
   }
 
   /**
-   * Load Keycloak configuration from backend
+   * Load persisted tokens from localStorage
+   */
+  loadPersistedTokens() {
+    try {
+      const storedTokens = localStorage.getItem('keycloak_tokens')
+      if (storedTokens) {
+        const tokens = JSON.parse(storedTokens)
+        
+        // Check if tokens are still valid (basic check)
+        if (tokens.access_token) {
+          const expiryTime = parseInt(localStorage.getItem('keycloak_token_expiry') || '0')
+          
+          if (Date.now() < expiryTime) {
+            console.log('📦 Loaded persisted tokens from localStorage')
+            this.tokens = tokens
+            this.accessToken = tokens.access_token
+            this.refreshToken = tokens.refresh_token
+            this.idToken = tokens.id_token
+            
+            // Extract user info from ID token if available
+            if (tokens.id_token) {
+              try {
+                const payload = JSON.parse(atob(tokens.id_token.split('.')[1]))
+                this.userInfo = payload
+                console.log('👤 Loaded user info from persisted ID token')
+              } catch (err) {
+                console.warn('⚠️ Failed to parse persisted ID token:', err)
+              }
+            }
+            
+            return true
+          } else {
+            console.log('⏰ Persisted tokens expired, clearing...')
+            this.clearTokens()
+          }
+        }
+      }
+      
+      console.log('ℹ️ No valid persisted tokens found')
+      return false
+    } catch (error) {
+      console.error('❌ Failed to load persisted tokens:', error)
+      this.clearTokens()
+      return false
+    }
+  }
+
+  /**
+   * Load Keycloak configuration (now hardcoded - no server needed)
    */
   async loadConfig() {
     try {
-      const response = await fetch('http://localhost:8000/api/keycloak-config')
-      if (!response.ok) {
-        throw new Error(`Failed to load config: ${response.status}`)
+      // Direct configuration - no server dependency
+      const config = {
+        url: 'https://auth.utribe.app',
+        realm: 'utribe',
+        clientId: 'giftportal',
+        isPublicClient: true
       }
-      const config = await response.json()
-      console.log('📡 Loaded Keycloak config:', { 
+      
+      console.log('📡 Using direct Keycloak config:', { 
         url: config.url, 
         realm: config.realm, 
         clientId: config.clientId,
         isPublicClient: config.isPublicClient 
       })
+      
       return config
     } catch (error) {
       console.error('❌ Failed to load Keycloak config:', error)
@@ -66,13 +158,9 @@ export class CSPSafeKeycloakService {
 
   /**
    * Get redirect URI for OAuth flow
-   * Provides fallback options for different deployment scenarios
    */
   getRedirectUri() {
     const origin = window.location.origin
-    const pathname = window.location.pathname
-    
-    // Return base origin with trailing slash for consistency
     return `${origin}/`
   }
 
@@ -113,109 +201,137 @@ export class CSPSafeKeycloakService {
   }
 
   /**
-   * Regular login (direct redirect, no iframe)
-   */
-  async login(options = {}) {
-    console.log('🔑 Starting regular login (direct redirect)...')
-    
-    const state = this.generateState()
-    const codeVerifier = this.generateCodeVerifier()
-    const codeChallenge = await this.generateCodeChallenge(codeVerifier)
-    const redirectUri = this.getRedirectUri()
-    
-    // Store PKCE verifier and state
-    sessionStorage.setItem('keycloak_code_verifier', codeVerifier)
-    sessionStorage.setItem('keycloak_state', state)
-    sessionStorage.setItem('keycloak_redirect_uri', redirectUri)
-    
-    const params = new URLSearchParams({
-      client_id: this.config.clientId,
-      redirect_uri: redirectUri,
-      response_type: 'code',
-      scope: 'openid profile email',
-      state: state,
-      code_challenge: codeChallenge,
-      code_challenge_method: 'S256',
-      ...options
-    })
-
-    const loginUrl = `${this.config.url}/realms/${this.config.realm}/protocol/openid-connect/auth?${params}`
-    
-    console.log('🔗 Using redirect URI:', redirectUri)
-    console.log('🔗 Redirecting to:', loginUrl)
-    window.location.href = loginUrl
-  }
-
-  /**
    * Handle OAuth callback from Keycloak
    */
   async handleOAuthCallback() {
-    console.log('🔄 Handling OAuth callback...')
-    
-    const urlParams = new URLSearchParams(window.location.search)
-    const code = urlParams.get('code')
-    const state = urlParams.get('state')
-    const error = urlParams.get('error')
-
-    if (error) {
-      console.error('❌ OAuth error:', error)
-      throw new Error(`OAuth error: ${error}`)
-    }
-
-    if (!code) {
-      console.error('❌ No authorization code received')
-      throw new Error('No authorization code received')
-    }
-
-    // Verify state
-    const storedState = sessionStorage.getItem('keycloak_state')
-    if (state !== storedState) {
-      console.error('❌ State mismatch')
-      throw new Error('State mismatch - possible CSRF attack')
-    }
-
-    const codeVerifier = sessionStorage.getItem('keycloak_code_verifier')
-    const storedRedirectUri = sessionStorage.getItem('keycloak_redirect_uri')
-    
-    if (!codeVerifier) {
-      console.error('❌ No code verifier found')
-      throw new Error('No code verifier found in session')
-    }
-
-    console.log('🔑 Using server-side token exchange...')
-    console.log('📍 Using stored redirect URI:', storedRedirectUri)
-
-    // Use server-side token exchange endpoint for security
-    const response = await fetch('http://localhost:8000/api/token-exchange', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        code: code,
-        codeVerifier: codeVerifier,
-        redirectUri: storedRedirectUri || this.getRedirectUri()
+    try {
+      console.log('🔄 Handling OAuth callback...')
+      
+      // Double-check we're actually on a callback URL
+      if (!this.isOAuthCallback()) {
+        console.log('⚠️ handleOAuthCallback called but not on callback URL, skipping...')
+        return false
+      }
+      
+      // Get URL parameters
+      const urlParams = new URLSearchParams(window.location.search)
+      const code = urlParams.get('code')
+      const state = urlParams.get('state')
+      const error = urlParams.get('error')
+      
+      if (error) {
+        throw new Error(`OAuth error: ${error}`)
+      }
+      
+      if (!code) {
+        throw new Error('No authorization code received')
+      }
+      
+      // Get stored values
+      const storedState = sessionStorage.getItem('oauth_state') || sessionStorage.getItem('keycloak_state')
+      const storedCodeVerifier = sessionStorage.getItem('code_verifier') || sessionStorage.getItem('keycloak_code_verifier')
+      const storedRedirectUri = sessionStorage.getItem('redirect_uri') || sessionStorage.getItem('keycloak_redirect_uri')
+      
+      // Validate state
+      if (state !== storedState) {
+        throw new Error('Invalid state parameter')
+      }
+      
+      console.log('🔑 Using direct Keycloak token exchange...')
+      console.log('📍 Using stored redirect URI:', storedRedirectUri)
+      
+      // Exchange code for tokens directly with Keycloak
+      const tokenResponse = await fetch(`${this.config.url}/realms/${this.config.realm}/protocol/openid-connect/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: this.config.clientId,
+          code: code,
+          redirect_uri: storedRedirectUri || window.location.origin + '/',
+          code_verifier: storedCodeVerifier
+        })
       })
-    })
-
-    if (!response.ok) {
-      const errorData = await response.json()
-      console.error('❌ Server-side token exchange failed:', errorData)
-      throw new Error(`Token exchange failed: ${errorData.error_description || errorData.error}`)
+      
+      if (!tokenResponse.ok) {
+        const errorText = await tokenResponse.text()
+        throw new Error(`Token exchange failed: ${tokenResponse.status} ${errorText}`)
+      }
+      
+      const tokens = await tokenResponse.json()
+      console.log('🎉 Received tokens from Keycloak:', tokens)
+      
+      // Store tokens
+      this.tokens = tokens
+      this.accessToken = tokens.access_token
+      this.refreshToken = tokens.refresh_token
+      this.idToken = tokens.id_token
+      
+      // Store in localStorage for persistence with expiry
+      localStorage.setItem('keycloak_tokens', JSON.stringify(tokens))
+      if (tokens.expires_in) {
+        const expiryTime = Date.now() + (tokens.expires_in * 1000)
+        localStorage.setItem('keycloak_token_expiry', expiryTime.toString())
+      }
+      
+      // Extract user info from ID token
+      if (tokens.id_token) {
+        const payload = JSON.parse(atob(tokens.id_token.split('.')[1]))
+        this.userInfo = payload
+        console.log('👤 Extracted user from ID token:', payload)
+      }
+      
+      // Clean up OAuth session data
+      sessionStorage.removeItem('oauth_state')
+      sessionStorage.removeItem('code_verifier')
+      sessionStorage.removeItem('redirect_uri')
+      sessionStorage.removeItem('keycloak_state')
+      sessionStorage.removeItem('keycloak_code_verifier')
+      sessionStorage.removeItem('keycloak_redirect_uri')
+      
+      // IMPORTANT: Clean up URL immediately and prevent any further processing
+      console.log('🧹 Cleaning up OAuth callback URL...')
+      const cleanUrl = window.location.protocol + '//' + window.location.host + window.location.pathname
+      window.history.replaceState({}, document.title, cleanUrl)
+      
+      console.log('✅ OAuth callback processed successfully')
+      
+      // Reset the processing flags
+      globalCallbackProcessing = false
+      this.isProcessingCallback = false
+      
+      return true
+    } catch (error) {
+      console.error('❌ OAuth callback error:', error)
+      // Clean up on error
+      this.clearTokens()
+      globalCallbackProcessing = false
+      this.isProcessingCallback = false
+      throw error
     }
+  }
 
-    this.tokens = await response.json()
+  /**
+   * Clear stored tokens
+   */
+  clearTokens() {
+    this.tokens = null
+    this.accessToken = null
+    this.refreshToken = null
+    this.idToken = null
+    this.userInfo = null
+    localStorage.removeItem('keycloak_tokens')
+    localStorage.removeItem('keycloak_token_expiry')
     
     // Clean up session storage
+    sessionStorage.removeItem('oauth_state')
+    sessionStorage.removeItem('code_verifier')
+    sessionStorage.removeItem('redirect_uri')
     sessionStorage.removeItem('keycloak_state')
     sessionStorage.removeItem('keycloak_code_verifier')
     sessionStorage.removeItem('keycloak_redirect_uri')
-    
-    // Clean up URL
-    window.history.replaceState({}, document.title, window.location.pathname)
-    
-    console.log('✅ OAuth callback processed successfully')
-    return true
   }
 
   /**
@@ -226,16 +342,18 @@ export class CSPSafeKeycloakService {
       throw new Error('No refresh token provided')
     }
 
-    console.log('🔄 Refreshing access token...')
+    console.log('🔄 Refreshing access token directly with Keycloak...')
 
     try {
-      const response = await fetch('http://localhost:8000/api/token-refresh', {
+      const response = await fetch(`${this.config.url}/realms/${this.config.realm}/protocol/openid-connect/token`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: JSON.stringify({
-          refreshToken: refreshToken
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: this.config.clientId,
+          refresh_token: refreshToken
         })
       })
 
@@ -287,16 +405,16 @@ export class CSPSafeKeycloakService {
    * Logout from Keycloak
    */
   async logout(redirectUri = null) {
-    // Check if config is available
-    if (!this.config || !this.config.clientId) {
-      console.warn('⚠️ Cannot logout: Keycloak not properly initialized')
-      // Just clear local storage and reload
-      localStorage.removeItem('auth_tokens')
-      localStorage.removeItem('auth_user')
-      window.location.reload()
+    // Early exit if config is not loaded
+    if (!this.config) {
+      console.log('⚠️ Logout called but config not loaded, clearing tokens only...')
+      this.clearTokens()
       return
     }
-
+    
+    // Clear tokens first
+    this.clearTokens()
+    
     const logoutRedirectUri = redirectUri || this.getRedirectUri()
     
     const params = new URLSearchParams({
